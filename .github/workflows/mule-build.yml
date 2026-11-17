@@ -5,6 +5,11 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_to_exchange:
+        description: Publish the POM version to Anypoint Exchange from main
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +21,12 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      - name: Require main for Exchange publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_exchange && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Select the main branch to publish to Anypoint Exchange."
+          exit 1
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -40,29 +51,44 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/apache-maven-$MAVEN_VERSION/bin" >> "$GITHUB_PATH"
 
-      - name: Build Mule application
-        env:
-          EXCHANGE_READ_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
-          EXCHANGE_READ_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+      - name: Configure Maven settings for Exchange
         run: |
-          settings="$RUNNER_TEMP/maven-settings.xml"
-
-          # The API specification is resolved from the student Exchange repository.
-          if [[ -n "$EXCHANGE_READ_CLIENT_ID" && -n "$EXCHANGE_READ_CLIENT_SECRET" ]]; then
-            cat > "$settings" <<'XML'
+          cat > "$RUNNER_TEMP/exchange-settings.xml" <<'XML'
           <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
             <servers>
               <server>
                 <id>anypoint-exchange-v3-student-deployment</id>
                 <username>~~~Client~~~</username>
-                <password>${env.EXCHANGE_READ_CLIENT_ID}~?~${env.EXCHANGE_READ_CLIENT_SECRET}</password>
+                <password>${env.EXCHANGE_CLIENT_ID}~?~${env.EXCHANGE_CLIENT_SECRET}</password>
               </server>
             </servers>
           </settings>
           XML
+
+      - name: Build Mule application
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+        run: |
+          settings=()
+          if [[ -n "$EXCHANGE_CLIENT_ID" && -n "$EXCHANGE_CLIENT_SECRET" ]]; then
+            settings=(--settings "$RUNNER_TEMP/exchange-settings.xml")
           else
             echo "Exchange credentials are unavailable. Maven will try to resolve dependencies anonymously."
-            printf '%s\n' '<settings/>' > "$settings"
           fi
 
-          mvn -B -ntp --settings "$settings" --file pom.xml -DskipTests clean package
+          mvn -B -ntp "${settings[@]}" --file pom.xml -DskipTests clean package
+
+      - name: Publish Mule application to Anypoint Exchange
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_exchange && github.ref == 'refs/heads/main'
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_PUBLISH_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_PUBLISH_CLIENT_SECRET }}
+        run: |
+          if [[ -z "$EXCHANGE_CLIENT_ID" || -z "$EXCHANGE_CLIENT_SECRET" ]]; then
+            echo "::error::Set EXCHANGE_PUBLISH_CLIENT_ID and EXCHANGE_PUBLISH_CLIENT_SECRET before publishing."
+            exit 1
+          fi
+
+          # Without muleDeploy, the Mule Maven plugin publishes to distributionManagement.
+          mvn -B -ntp --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml -DskipTests deploy
