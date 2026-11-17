@@ -1,4 +1,4 @@
-name: Mule Build and Exchange Publish
+name: Mule Build, Exchange Publish and Sandbox Deploy
 
 on:
   push:
@@ -136,3 +136,55 @@ jobs:
           export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
           export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
           ./mvnw -B -ntp -DskipTests deploy
+
+  deploy_cloudhub:
+    name: Deploy the published Mule app to CloudHub Sandbox
+    needs: build
+    environment: cloudhub-sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Deploy the Exchange asset to CloudHub 2.0
+        env:
+          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME }}
+          CLOUDHUB_CLIENT_ID: ${{ secrets.CLOUDHUB_CLIENT_ID }}
+          CLOUDHUB_CLIENT_SECRET: ${{ secrets.CLOUDHUB_CLIENT_SECRET }}
+          CONFIGURE_RUNTIME: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES }}
+          CLOUDHUB_API_ID: ${{ vars.CLOUDHUB_API_ID }}
+          CLOUDHUB_ENCRYPT_KEY: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.CLOUDHUB_ENCRYPT_KEY || '' }}
+          ANYPOINT_PLATFORM_CLIENT_ID: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_ID || '' }}
+          ANYPOINT_PLATFORM_CLIENT_SECRET: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_SECRET || '' }}
+        run: |
+          if [[ -z "$CLOUDHUB_APP_NAME" || -z "$CLOUDHUB_CLIENT_ID" || -z "$CLOUDHUB_CLIENT_SECRET" ]]; then
+            echo "::error::Set CLOUDHUB_APP_NAME and the CloudHub Connected App secrets in cloudhub-sandbox."
+            exit 1
+          fi
+
+          runtime_profile=()
+          case "$CONFIGURE_RUNTIME" in
+            ''|false) ;;
+            true)
+              if [[ ! "$CLOUDHUB_API_ID" =~ ^[1-9][0-9]*$ || -z "$CLOUDHUB_ENCRYPT_KEY" || -z "$ANYPOINT_PLATFORM_CLIENT_ID" || -z "$ANYPOINT_PLATFORM_CLIENT_SECRET" ]]; then
+                echo "::error::Setting runtime properties requires CLOUDHUB_API_ID, CLOUDHUB_ENCRYPT_KEY, and both Anypoint Platform credentials."
+                exit 1
+              fi
+              runtime_profile=(-Pcloudhub-runtime-properties)
+              ;;
+            *)
+              echo "::error::CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES must be true or false."
+              exit 1
+              ;;
+          esac
+
+          # CloudHub retrieves the published version from Exchange.
+          ./mvnw -B -ntp "${runtime_profile[@]}" mule:deploy
