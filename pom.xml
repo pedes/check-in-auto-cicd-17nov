@@ -7,7 +7,7 @@
 		<artifactId>solutions-bom</artifactId>
 		<version>1.0.0</version>
 		<!-- Replace with your actual parent version -->
-		<relativePath>../parent-pom/pom.xml</relativePath>
+		<relativePath>parent-pom/pom.xml</relativePath>
 	</parent>
 
 	<!-- Is mandatory to match the groupId with OrganizationID -->

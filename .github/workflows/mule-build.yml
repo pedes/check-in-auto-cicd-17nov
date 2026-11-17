@@ -1,0 +1,54 @@
+name: Mule Build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package Mule application
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          overwrite-settings: false
+
+      - name: Build Mule application
+        env:
+          EXCHANGE_READ_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_READ_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+        run: |
+          settings="$RUNNER_TEMP/maven-settings.xml"
+
+          # The API specification is resolved from the student Exchange repository.
+          if [[ -n "$EXCHANGE_READ_CLIENT_ID" && -n "$EXCHANGE_READ_CLIENT_SECRET" ]]; then
+            cat > "$settings" <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+            <servers>
+              <server>
+                <id>anypoint-exchange-v3-student-deployment</id>
+                <username>~~~Client~~~</username>
+                <password>${env.EXCHANGE_READ_CLIENT_ID}~?~${env.EXCHANGE_READ_CLIENT_SECRET}</password>
+              </server>
+            </servers>
+          </settings>
+          XML
+          else
+            echo "Exchange credentials are unavailable. Maven will try to resolve dependencies anonymously."
+            printf '%s\n' '<settings/>' > "$settings"
+          fi
+
+          mvn -B -ntp --settings "$settings" --file pom.xml -DskipTests clean package
