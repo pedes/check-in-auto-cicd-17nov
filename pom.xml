@@ -7,13 +7,13 @@
 		<artifactId>solutions-bom</artifactId>
 		<version>1.0.0</version>
 		<!-- Replace with your actual parent version -->
-		<relativePath>../parent-pom/pom.xml</relativePath>
+		<relativePath>parent-pom/pom.xml</relativePath>
 	</parent>
 
 	<!-- Is mandatory to match the groupId with OrganizationID -->
 	<groupId>20830613-f395-4714-be40-b9921fc4c089</groupId>
 	<artifactId>check-in-proc-api-app</artifactId>
-	<version>1.0.0</version>
+	<version>1.0.1</version>
 	<packaging>mule-application</packaging>
 
 	<name>check-in-proc-api-app</name>
@@ -24,6 +24,7 @@
 
 		<app.runtime>4.13.1</app.runtime>
 		<mule.maven.plugin.version>4.10.3</mule.maven.plugin.version>
+		<applicationName>${env.CLOUDHUB_APP_NAME}</applicationName>
 	</properties>
 
 	<build>
@@ -39,6 +40,7 @@
 				<version>${mule.maven.plugin.version}</version>
 				<extensions>true</extensions>
 				<configuration>
+					<classifier>mule-application</classifier>
 					<cloudhub2Deployment>
 						<!-- URL of the control plane -->
 						<uri>https://anypoint.mulesoft.com</uri>
@@ -51,30 +53,16 @@
 						<!-- mule version format muleruntime-java17 -->
 						<!-- If not provided, will choose the latest Edge version -->
 						<muleVersion>4.13.2:7e-java17</muleVersion>
-						<!-- Authentication to do the deployment -->
-						<!-- Connected Apps, clientid and secret for CI Server -->
-						<!-- <connectedAppClientId>${ca_client_id}</connectedAppClientId>
-						<connectedAppClientSecret>${ca_client_secret}</connectedAppClientSecret>
-						<connectedAppGrantType>client_credentials</connectedAppGrantType> -->
-
-						<server>cloudhub-deploy</server>
-
+						<connectedAppClientId>${env.CLOUDHUB_CLIENT_ID}</connectedAppClientId>
+						<connectedAppClientSecret>${env.CLOUDHUB_CLIENT_SECRET}</connectedAppClientSecret>
+						<connectedAppGrantType>client_credentials</connectedAppGrantType>
 						<applicationName>${applicationName}</applicationName>
 						<replicas>1</replicas>
 						<vCores>0.1</vCores>
-						<properties>
-							<custom>this demo value is visible in runtime manager</custom>
-						</properties>
-						<secureProperties>
-							<anypoint.platform.client_id>{$anypoint.platform.client_id}</anypoint.platform.client_id>
-							<anypoint.platform.client_secret>${anypoint.platform.client_secret}</anypoint.platform.client_secret>
-							<encrypt.key>${encrypt.key}</encrypt.key>
-						</secureProperties>
 						<deploymentSettings>
 							<http>
 								<inbound>
-									<!-- set to false because the mule app doesnt use HTTPS certificates 
-										internally -->
+									<!-- The Mule HTTP listener uses HTTPS. -->
 									<lastMileSecurity>true</lastMileSecurity>
 								</inbound>
 							</http>
@@ -114,5 +102,41 @@
 			<classifier>mule-plugin</classifier>
 		</dependency>
 	</dependencies>
+
+	<repositories>
+		<repository>
+			<id>mulesoft-public</id>
+			<url>https://repository.mulesoft.org/nexus/content/groups/public/</url>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
+
+	<profiles>
+		<profile>
+			<id>cloudhub-runtime-properties</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.mule.tools.maven</groupId>
+						<artifactId>mule-maven-plugin</artifactId>
+						<configuration>
+							<cloudhub2Deployment>
+								<properties>
+									<api.id>${env.CLOUDHUB_API_ID}</api.id>
+								</properties>
+								<secureProperties>
+									<anypoint.platform.client_id>${env.ANYPOINT_PLATFORM_CLIENT_ID}</anypoint.platform.client_id>
+									<anypoint.platform.client_secret>${env.ANYPOINT_PLATFORM_CLIENT_SECRET}</anypoint.platform.client_secret>
+									<encrypt.key>${env.CLOUDHUB_ENCRYPT_KEY}</encrypt.key>
+								</secureProperties>
+							</cloudhub2Deployment>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>

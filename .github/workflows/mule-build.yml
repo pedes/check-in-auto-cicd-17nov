@@ -1,0 +1,190 @@
+name: Mule Build, Exchange Publish and Sandbox Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mule-exchange-publish
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build and publish Mule application
+    if: >-
+      github.repository == 'pedes/check-in-auto-cicd-17nov'
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    environment: exchange
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          server-id: anypoint-exchange-v3-student-deployment
+          server-username-env-var: EXCHANGE_MAVEN_USERNAME
+          server-password-env-var: EXCHANGE_MAVEN_PASSWORD
+
+      - name: Compile and package Mule application
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+        run: |
+          if [[ -z "$EXCHANGE_CLIENT_ID" || -z "$EXCHANGE_CLIENT_SECRET" ]]; then
+            echo "::error::Configure the shared Exchange credentials in the exchange environment."
+            exit 1
+          fi
+
+          export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
+          export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
+          ./mvnw -B -ntp -DskipTests clean package
+
+      - name: Identify the packaged Mule application JAR
+        id: mule_app
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          from urllib.parse import quote
+          from zipfile import BadZipFile, ZipFile
+
+          jars = list(Path("target").glob("*-mule-application.jar"))
+          if len(jars) != 1:
+              sys.exit(f"Expected one packaged Mule application JAR, found {len(jars)}.")
+
+          jar, = jars
+          try:
+              with ZipFile(jar) as archive:
+                  archive.getinfo("META-INF/mule-artifact/mule-artifact.json")
+                  model = json.loads(archive.read("META-INF/mule-artifact/classloader-model.json"))
+              metadata = model["artifactCoordinates"]
+              coordinates = [metadata[key] for key in ("groupId", "artifactId", "version")]
+              if metadata["classifier"] != "mule-application" or metadata["type"] != "jar":
+                  sys.exit("The packaged artifact must be a Mule application JAR.")
+          except (BadZipFile, KeyError, ValueError, TypeError) as error:
+              sys.exit(f"The packaged JAR is missing valid Mule application metadata: {type(error).__name__}.")
+
+          if not all(isinstance(value, str) and value.strip() and value not in (".", "..") for value in coordinates):
+              sys.exit("The packaged Mule application has invalid Exchange coordinates.")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("asset_path=" + "/".join(quote(value, safe="") for value in coordinates) + "\n")
+          print(f"Packaged Mule application JAR: {jar.name}")
+          PY
+
+      - name: Check whether the Mule application JAR is already in Exchange
+        id: exchange_version
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          MULE_APP_ASSET_PATH: ${{ steps.mule_app.outputs.asset_path }}
+        run: |
+          token="$(curl --fail --silent --show-error --max-time 30 \
+            --data-urlencode 'grant_type=client_credentials' \
+            --data-urlencode "client_id=$EXCHANGE_CLIENT_ID" \
+            --data-urlencode "client_secret=$EXCHANGE_CLIENT_SECRET" \
+            'https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token' \
+            | jq -er '.access_token | select(type == "string" and length > 0)')"
+          printf '::add-mask::%s\n' "$token"
+
+          asset_metadata="$RUNNER_TEMP/exchange-asset.json"
+          status="$(curl --silent --show-error --max-time 30 --output "$asset_metadata" \
+            --write-out '%{http_code}' --header "Authorization: Bearer $token" \
+            "https://anypoint.mulesoft.com/exchange/api/v2/assets/$MULE_APP_ASSET_PATH")"
+          case "$status" in
+            200)
+              if ! jq -e '.type == "app" and any(.files[]?; .classifier == "mule-application" and .packaging == "jar")' \
+                "$asset_metadata" > /dev/null 2>&1; then
+                echo "::error::An Exchange asset occupies this version without a Mule application JAR."
+                exit 1
+              fi
+              echo "This Mule application version is already in Exchange. Skipping publish."
+              echo 'exists=true' >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo 'exists=false' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Exchange asset lookup returned HTTP $status. Publishing was halted."
+              exit 1
+              ;;
+          esac
+
+      - name: Publish Mule application to Anypoint Exchange
+        if: steps.exchange_version.outputs.exists == 'false'
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+        run: |
+          export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
+          export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
+          ./mvnw -B -ntp -DskipTests deploy
+
+  deploy_cloudhub:
+    name: Deploy the published Mule app to CloudHub Sandbox
+    needs: build
+    environment: cloudhub-sandbox
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Deploy the Exchange asset to CloudHub 2.0
+        env:
+          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
+          CLOUDHUB_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          CLOUDHUB_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          CONFIGURE_RUNTIME: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES }}
+          CLOUDHUB_API_ID: ${{ vars.CLOUDHUB_API_ID }}
+          CLOUDHUB_ENCRYPT_KEY: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.CLOUDHUB_ENCRYPT_KEY || '' }}
+          ANYPOINT_PLATFORM_CLIENT_ID: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_ID || '' }}
+          ANYPOINT_PLATFORM_CLIENT_SECRET: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_SECRET || '' }}
+        run: |
+          if [[ -z "$CLOUDHUB_CLIENT_ID" || -z "$CLOUDHUB_CLIENT_SECRET" ]]; then
+            echo "::error::The shared Anypoint Connected App secrets are unavailable."
+            exit 1
+          fi
+
+          runtime_profile=()
+          case "$CONFIGURE_RUNTIME" in
+            ''|false) ;;
+            true)
+              if [[ ! "$CLOUDHUB_API_ID" =~ ^[1-9][0-9]*$ || -z "$CLOUDHUB_ENCRYPT_KEY" || -z "$ANYPOINT_PLATFORM_CLIENT_ID" || -z "$ANYPOINT_PLATFORM_CLIENT_SECRET" ]]; then
+                echo "::error::Setting runtime properties requires CLOUDHUB_API_ID, CLOUDHUB_ENCRYPT_KEY, and both Anypoint Platform credentials."
+                exit 1
+              fi
+              runtime_profile=(-Pcloudhub-runtime-properties)
+              ;;
+            *)
+              echo "::error::CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES must be true or false."
+              exit 1
+              ;;
+          esac
+
+          # CloudHub retrieves the published version from Exchange.
+          ./mvnw -B -ntp "${runtime_profile[@]}" mule:deploy
