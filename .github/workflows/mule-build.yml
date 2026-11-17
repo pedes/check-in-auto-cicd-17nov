@@ -26,6 +26,20 @@ jobs:
           java-version: '17'
           overwrite-settings: false
 
+      # Mule Maven Plugin 4.10.3 supports Maven through 3.9.15.
+      - name: Set up Apache Maven
+        env:
+          MAVEN_VERSION: '3.9.15'
+          MAVEN_SHA512: 33d81e0ec785f0207e3e5e3ffb61863e1dca5784c15ac3fb5ff105f69cffbea484eb8d473ea60467a63f7b0570eef8622f2fed8eee96acbe668aa313391cddb3
+        run: |
+          archive="$RUNNER_TEMP/apache-maven-$MAVEN_VERSION-bin.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/$MAVEN_VERSION/apache-maven-$MAVEN_VERSION-bin.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$MAVEN_SHA512" "$archive" | sha512sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-$MAVEN_VERSION/bin" >> "$GITHUB_PATH"
+
       - name: Build Mule application
         env:
           EXCHANGE_READ_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
