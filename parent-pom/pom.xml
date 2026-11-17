@@ -36,8 +36,6 @@
     </license>
   </licenses>
   <properties>
-    <!-- Not explicitly used but needed for deployment to Exchange, otherwise Exchange cannot determine the asset type -->
-    <type>custom</type>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <!-- Java version -->
@@ -299,11 +297,15 @@
     <!-- tag::emmp-config[] -->
     <profile>
       <id>deploy-to-exchange-v3</id>
+      <properties>
+        <type>custom</type>
+      </properties>
       <build>
         <plugins>
           <plugin>
             <groupId>org.mule.tools.maven</groupId>
             <artifactId>exchange-mule-maven-plugin</artifactId>
+            <inherited>false</inherited>
             <version>${exchange.mule.maven.plugin.version}</version>
             <executions>
               <execution>

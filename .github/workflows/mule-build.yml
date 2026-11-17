@@ -36,35 +36,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          overwrite-settings: false
-
-      # Mule Maven Plugin 4.10.3 supports Maven through 3.9.15.
-      - name: Set up Apache Maven
-        env:
-          MAVEN_VERSION: '3.9.15'
-          MAVEN_SHA512: 33d81e0ec785f0207e3e5e3ffb61863e1dca5784c15ac3fb5ff105f69cffbea484eb8d473ea60467a63f7b0570eef8622f2fed8eee96acbe668aa313391cddb3
-        run: |
-          archive="$RUNNER_TEMP/apache-maven-$MAVEN_VERSION-bin.tar.gz"
-          curl --fail --silent --show-error --location --retry 3 \
-            "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/$MAVEN_VERSION/apache-maven-$MAVEN_VERSION-bin.tar.gz" \
-            --output "$archive"
-          printf '%s  %s\n' "$MAVEN_SHA512" "$archive" | sha512sum --check
-          tar -xzf "$archive" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/apache-maven-$MAVEN_VERSION/bin" >> "$GITHUB_PATH"
-
-      - name: Configure Maven settings for Exchange
-        run: |
-          cat > "$RUNNER_TEMP/exchange-settings.xml" <<'XML'
-          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
-            <servers>
-              <server>
-                <id>anypoint-exchange-v3-student-deployment</id>
-                <username>~~~Client~~~</username>
-                <password>${env.EXCHANGE_CLIENT_ID}~?~${env.EXCHANGE_CLIENT_SECRET}</password>
-              </server>
-            </servers>
-          </settings>
-          XML
+          server-id: anypoint-exchange-v3-student-deployment
+          server-username-env-var: EXCHANGE_MAVEN_USERNAME
+          server-password-env-var: EXCHANGE_MAVEN_PASSWORD
 
       - name: Compile and package Mule application
         env:
@@ -76,32 +50,52 @@ jobs:
             exit 1
           fi
 
-          # Maven runs the compile phase on its way to package.
-          mvn -B -ntp --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml -DskipTests clean package
+          export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
+          export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
+          ./mvnw -B -ntp -DskipTests clean package
 
-      - name: Check whether the POM version exists in Exchange
+      - name: Identify the packaged Mule application JAR
+        id: mule_app
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          from urllib.parse import quote
+          from zipfile import BadZipFile, ZipFile
+
+          jars = list(Path("target").glob("*-mule-application.jar"))
+          if len(jars) != 1:
+              sys.exit(f"Expected one packaged Mule application JAR, found {len(jars)}.")
+
+          jar, = jars
+          try:
+              with ZipFile(jar) as archive:
+                  archive.getinfo("META-INF/mule-artifact/mule-artifact.json")
+                  model = json.loads(archive.read("META-INF/mule-artifact/classloader-model.json"))
+              metadata = model["artifactCoordinates"]
+              coordinates = [metadata[key] for key in ("groupId", "artifactId", "version")]
+              if metadata["classifier"] != "mule-application" or metadata["type"] != "jar":
+                  sys.exit("The packaged artifact must be a Mule application JAR.")
+          except (BadZipFile, KeyError, ValueError, TypeError) as error:
+              sys.exit(f"The packaged JAR is missing valid Mule application metadata: {type(error).__name__}.")
+
+          if not all(isinstance(value, str) and value.strip() and value not in (".", "..") for value in coordinates):
+              sys.exit("The packaged Mule application has invalid Exchange coordinates.")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("asset_path=" + "/".join(quote(value, safe="") for value in coordinates) + "\n")
+          print(f"Packaged Mule application JAR: {jar.name}")
+          PY
+
+      - name: Check whether the Mule application JAR is already in Exchange
         id: exchange_version
         env:
           EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          MULE_APP_ASSET_PATH: ${{ steps.mule_app.outputs.asset_path }}
         run: |
-          effective_pom="$RUNNER_TEMP/effective-pom.xml"
-          mvn -B -ntp -q --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml \
-            org.apache.maven.plugins:maven-help-plugin:3.5.1:effective-pom -Doutput="$effective_pom"
-
-          asset_path="$(python3 - "$effective_pom" <<'PY'
-          import sys
-          from urllib.parse import quote
-          from xml.etree import ElementTree
-
-          project = ElementTree.parse(sys.argv[1])
-          coordinates = [project.findtext(f"{{*}}{name}") for name in ("groupId", "artifactId", "version")]
-          if not all(coordinates):
-              raise SystemExit("The effective POM is missing Exchange asset coordinates.")
-          print("/".join(quote(value, safe="") for value in coordinates))
-          PY
-          )"
-
           token="$(curl --fail --silent --show-error --max-time 30 \
             --data-urlencode 'grant_type=client_credentials' \
             --data-urlencode "client_id=$EXCHANGE_CLIENT_ID" \
@@ -110,12 +104,18 @@ jobs:
             | jq -er '.access_token | select(type == "string" and length > 0)')"
           printf '::add-mask::%s\n' "$token"
 
-          status="$(curl --silent --show-error --max-time 30 --output /dev/null \
+          asset_metadata="$RUNNER_TEMP/exchange-asset.json"
+          status="$(curl --silent --show-error --max-time 30 --output "$asset_metadata" \
             --write-out '%{http_code}' --header "Authorization: Bearer $token" \
-            "https://anypoint.mulesoft.com/exchange/api/v2/assets/$asset_path")"
+            "https://anypoint.mulesoft.com/exchange/api/v2/assets/$MULE_APP_ASSET_PATH")"
           case "$status" in
             200)
-              echo "Asset version already exists in Exchange. Skipping publish."
+              if ! jq -e '.type == "app" and any(.files[]?; .classifier == "mule-application" and .packaging == "jar")' \
+                "$asset_metadata" > /dev/null 2>&1; then
+                echo "::error::An Exchange asset occupies this version without a Mule application JAR."
+                exit 1
+              fi
+              echo "This Mule application version is already in Exchange. Skipping publish."
               echo 'exists=true' >> "$GITHUB_OUTPUT"
               ;;
             404)
@@ -133,5 +133,6 @@ jobs:
           EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
         run: |
-          # Without muleDeploy, the Mule Maven plugin publishes to distributionManagement.
-          mvn -B -ntp --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml -DskipTests deploy
+          export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
+          export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
+          ./mvnw -B -ntp -DskipTests deploy
