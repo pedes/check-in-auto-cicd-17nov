@@ -9,7 +9,7 @@ jobs:
   check:
     if: github.repository == 'pedes/check-in-auto-cicd-17nov' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 8
     environment: cloudhub-sandbox
     steps:
       - name: Read the app state and classify startup errors
@@ -58,7 +58,22 @@ jobs:
           if len(matches) != 1:
               raise SystemExit("Expected one matching app in Runtime Manager.")
           path = root + "/" + quote(matches[0]["id"], safe="")
-          deployed = json.loads(request(path, token=token))
+          deadline = time.monotonic() + 360
+          previous = None
+          while True:
+              deployed = json.loads(request(path, token=token))
+              replica_states = tuple(replica.get("status") or replica.get("state")
+                                     for replica in deployed.get("replicas", []))
+              states = (deployed.get("status"), replica_states)
+              if states != previous:
+                  summary("Rollout status", states[0])
+                  for state in states[1]:
+                      summary("Rollout replica status", state)
+                  previous = states
+              if states[0] not in ("APPLYING", "STARTING", "PARTIALLY_STARTED", "PENDING") or time.monotonic() >= deadline:
+                  break
+              time.sleep(15)
+
           application = deployed.get("application") or {}
           summary("Deployment status", deployed.get("status"))
           summary("Application status", application.get("status"))
@@ -66,6 +81,15 @@ jobs:
           spec = deployed.get("desiredVersion")
           if spec:
               print("Requested deployment is last successful deployment:", spec == deployed.get("lastSuccessfulVersion"))
+          last_good = deployed.get("lastSuccessfulVersion")
+          try:
+              specs = json.loads(request(path + "/specs?limit=10", token=token))
+              for item in specs.get("items", []):
+                  if last_good and last_good in (item.get("id"), item.get("version")):
+                      summary("Last successful app version", ((item.get("application") or {}).get("ref") or {}).get("version"))
+                      break
+          except HTTPError as error:
+              print(f"Deployment revision lookup returned HTTP {error.code}.")
           for replica in deployed.get("replicas", []):
               summary("Replica status", replica.get("status") or replica.get("state"))
 
@@ -87,7 +111,16 @@ jobs:
                       "API autodiscovery error": r"(?:autodiscovery|auto.?discovery).{0,150}(?:failed|error|forbidden|unauthorized|not found)",
                       "Mule startup error": r"failed to deploy artifact|deploymentstartException|error initiali[sz]ing.*application|failed to start application",
                   }
+                  hints.update({
+                      "container image pull error": r"imagepullbackoff|errimagepull|failed to pull image",
+                      "readiness probe failed": r"readiness probe failed|startup probe failed|unhealthy",
+                      "replica scheduling problem": r"failedscheduling|unschedulable|insufficient cpu",
+                      "artifact retrieval error": r"fail(?:ed|ure) to (?:download|retrieve).*(?:artifact|exchange)|artifact.*not found",
+                      "Mule runtime reported ready": r"mule is up and kicking|successfully deployed artifact|started app(?:lication)? ",
+                  })
+                  replica_metadata = json.dumps(deployed.get("replicas", []))
                   found = [label for label, pattern in hints.items()
-                           if re.search(pattern, logs, flags=re.IGNORECASE)]
+                           if re.search(pattern, logs, flags=re.IGNORECASE)
+                           or re.search(pattern, replica_metadata, flags=re.IGNORECASE)]
                   print("Startup symptoms:", ", ".join(found) if found else "none from known patterns")
           PY
