@@ -1,0 +1,93 @@
+name: Check CloudHub Sandbox rollout
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: github.repository == 'pedes/check-in-auto-cicd-17nov' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: cloudhub-sandbox
+    steps:
+      - name: Read the app state and classify startup errors
+        env:
+          CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          import time
+          from urllib.error import HTTPError
+          from urllib.parse import quote, urlencode
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class NoRedirects(HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          site = "https://anypoint.mulesoft.com"
+          organization = "20830613-f395-4714-be40-b9921fc4c089"
+          client = build_opener(NoRedirects)
+
+          def request(path, *, token=None, data=None, limit=4_000_000):
+              headers = {"Authorization": "Bearer " + token} if token else {}
+              with client.open(Request(site + path, data=data, headers=headers), timeout=25) as response:
+                  return response.read(limit)
+
+          def summary(label, value):
+              safe = str(value or "unknown")
+              print(f"{label}: {safe if re.fullmatch(r'[a-zA-Z0-9_.+-]{1,64}', safe) else 'unknown'}")
+
+          access = urlencode({
+              "grant_type": "client_credentials",
+              "client_id": os.environ["CLIENT_ID"],
+              "client_secret": os.environ["CLIENT_SECRET"],
+          }).encode()
+          token = json.loads(request("/accounts/api/v2/oauth2/token", data=access))["access_token"]
+          envs = json.loads(request("/accounts/api/organizations/" + organization + "/environments", token=token))
+          sandbox, = [entry for entry in envs["data"] if entry["name"] == "Sandbox"]
+          root = f"/amc/application-manager/api/v2/organizations/{organization}/environments/{quote(sandbox['id'], safe='')}/deployments"
+          listing = json.loads(request(root, token=token))
+          matches = [entry for entry in listing["items"] if entry["name"] == os.environ["APP_NAME"]]
+          if len(matches) != 1:
+              raise SystemExit("Expected one matching app in Runtime Manager.")
+          path = root + "/" + quote(matches[0]["id"], safe="")
+          deployed = json.loads(request(path, token=token))
+          application = deployed.get("application") or {}
+          summary("Deployment status", deployed.get("status"))
+          summary("Application status", application.get("status"))
+          summary("Requested Mule app version", (application.get("ref") or {}).get("version"))
+          spec = deployed.get("desiredVersion")
+          if spec:
+              print("Requested deployment is last successful deployment:", spec == deployed.get("lastSuccessfulVersion"))
+          for replica in deployed.get("replicas", []):
+              summary("Replica status", replica.get("status") or replica.get("state"))
+
+          if spec:
+              end_time = int(time.time() * 1000)
+              interval = urlencode({"startTime": end_time - 3_600_000, "endTime": end_time, "descending": "true"})
+              try:
+                  logs = request(path + "/specs/" + quote(spec, safe="") + "/logs/file?" + interval,
+                                 token=token).decode(errors="replace")
+              except HTTPError as error:
+                  print(f"Runtime log lookup returned HTTP {error.code}.")
+              else:
+                  print("Runtime log data available:", bool(logs.strip()))
+                  hints = {
+                      "missing encrypt.key property": r"(?:propertynotfound|could not|cannot|missing|not found|unresolved).{0,180}encrypt\.key|encrypt\.key.{0,120}(?:not found|missing|required)",
+                      "secure property decryption failure": r"muleencryptionexception|badpaddingexception|could not decrypt",
+                      "memory limit error": r"oomkilled|outofmemoryerror|insufficient memory",
+                      "keystore or certificate error": r"unrecoverablekeyexception|keystore was tampered|pkix path building failed|keystore password was incorrect",
+                      "API autodiscovery error": r"(?:autodiscovery|auto.?discovery).{0,150}(?:failed|error|forbidden|unauthorized|not found)",
+                      "Mule startup error": r"failed to deploy artifact|deploymentstartException|error initiali[sz]ing.*application|failed to start application",
+                  }
+                  found = [label for label, pattern in hints.items()
+                           if re.search(pattern, logs, flags=re.IGNORECASE)]
+                  print("Startup symptoms:", ", ".join(found) if found else "none from known patterns")
+          PY
