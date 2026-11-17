@@ -156,17 +156,17 @@ jobs:
 
       - name: Deploy the Exchange asset to CloudHub 2.0
         env:
-          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME }}
-          CLOUDHUB_CLIENT_ID: ${{ secrets.CLOUDHUB_CLIENT_ID }}
-          CLOUDHUB_CLIENT_SECRET: ${{ secrets.CLOUDHUB_CLIENT_SECRET }}
+          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
+          CLOUDHUB_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          CLOUDHUB_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
           CONFIGURE_RUNTIME: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES }}
           CLOUDHUB_API_ID: ${{ vars.CLOUDHUB_API_ID }}
           CLOUDHUB_ENCRYPT_KEY: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.CLOUDHUB_ENCRYPT_KEY || '' }}
           ANYPOINT_PLATFORM_CLIENT_ID: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_ID || '' }}
           ANYPOINT_PLATFORM_CLIENT_SECRET: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_SECRET || '' }}
         run: |
-          if [[ -z "$CLOUDHUB_APP_NAME" || -z "$CLOUDHUB_CLIENT_ID" || -z "$CLOUDHUB_CLIENT_SECRET" ]]; then
-            echo "::error::Set CLOUDHUB_APP_NAME and the CloudHub Connected App secrets in cloudhub-sandbox."
+          if [[ -z "$CLOUDHUB_CLIENT_ID" || -z "$CLOUDHUB_CLIENT_SECRET" ]]; then
+            echo "::error::The shared Anypoint Connected App secrets are unavailable."
             exit 1
           fi
 
