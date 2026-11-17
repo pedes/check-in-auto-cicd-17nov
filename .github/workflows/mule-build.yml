@@ -1,32 +1,33 @@
-name: Mule Build
+name: Mule Build and Exchange Publish
 
 on:
   push:
-    branches: ['**']
-  pull_request:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      publish_to_exchange:
-        description: Publish the POM version to Anypoint Exchange from main
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: mule-exchange-publish
+  queue: max
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
-    name: Package Mule application
+    name: Build and publish Mule application
+    if: >-
+      github.repository == 'pedes/check-in-auto-cicd-17nov'
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    environment: exchange
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - name: Require main for Exchange publishing
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_exchange && github.ref != 'refs/heads/main'
-        run: |
-          echo "::error::Select the main branch to publish to Anypoint Exchange."
-          exit 1
-
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -65,30 +66,72 @@ jobs:
           </settings>
           XML
 
-      - name: Build Mule application
+      - name: Compile and package Mule application
         env:
           EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
         run: |
-          settings=()
-          if [[ -n "$EXCHANGE_CLIENT_ID" && -n "$EXCHANGE_CLIENT_SECRET" ]]; then
-            settings=(--settings "$RUNNER_TEMP/exchange-settings.xml")
-          else
-            echo "Exchange credentials are unavailable. Maven will try to resolve dependencies anonymously."
-          fi
-
-          mvn -B -ntp "${settings[@]}" --file pom.xml -DskipTests clean package
-
-      - name: Publish Mule application to Anypoint Exchange
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_to_exchange && github.ref == 'refs/heads/main'
-        env:
-          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_PUBLISH_CLIENT_ID }}
-          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_PUBLISH_CLIENT_SECRET }}
-        run: |
           if [[ -z "$EXCHANGE_CLIENT_ID" || -z "$EXCHANGE_CLIENT_SECRET" ]]; then
-            echo "::error::Set EXCHANGE_PUBLISH_CLIENT_ID and EXCHANGE_PUBLISH_CLIENT_SECRET before publishing."
+            echo "::error::Configure the shared Exchange credentials in the exchange environment."
             exit 1
           fi
 
+          # Maven runs the compile phase on its way to package.
+          mvn -B -ntp --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml -DskipTests clean package
+
+      - name: Check whether the POM version exists in Exchange
+        id: exchange_version
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+        run: |
+          effective_pom="$RUNNER_TEMP/effective-pom.xml"
+          mvn -B -ntp -q --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml \
+            org.apache.maven.plugins:maven-help-plugin:3.5.1:effective-pom -Doutput="$effective_pom"
+
+          asset_path="$(python3 - "$effective_pom" <<'PY'
+          import sys
+          from urllib.parse import quote
+          from xml.etree import ElementTree
+
+          project = ElementTree.parse(sys.argv[1])
+          coordinates = [project.findtext(f"{{*}}{name}") for name in ("groupId", "artifactId", "version")]
+          if not all(coordinates):
+              raise SystemExit("The effective POM is missing Exchange asset coordinates.")
+          print("/".join(quote(value, safe="") for value in coordinates))
+          PY
+          )"
+
+          token="$(curl --fail --silent --show-error --max-time 30 \
+            --data-urlencode 'grant_type=client_credentials' \
+            --data-urlencode "client_id=$EXCHANGE_CLIENT_ID" \
+            --data-urlencode "client_secret=$EXCHANGE_CLIENT_SECRET" \
+            'https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token' \
+            | jq -er '.access_token | select(type == "string" and length > 0)')"
+          printf '::add-mask::%s\n' "$token"
+
+          status="$(curl --silent --show-error --max-time 30 --output /dev/null \
+            --write-out '%{http_code}' --header "Authorization: Bearer $token" \
+            "https://anypoint.mulesoft.com/exchange/api/v2/assets/$asset_path")"
+          case "$status" in
+            200)
+              echo "Asset version already exists in Exchange. Skipping publish."
+              echo 'exists=true' >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo 'exists=false' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Exchange asset lookup returned HTTP $status. Publishing was halted."
+              exit 1
+              ;;
+          esac
+
+      - name: Publish Mule application to Anypoint Exchange
+        if: steps.exchange_version.outputs.exists == 'false'
+        env:
+          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
+          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+        run: |
           # Without muleDeploy, the Mule Maven plugin publishes to distributionManagement.
           mvn -B -ntp --settings "$RUNNER_TEMP/exchange-settings.xml" --file pom.xml -DskipTests deploy
