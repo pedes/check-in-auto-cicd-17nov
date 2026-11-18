@@ -183,4 +183,9 @@ jobs:
 
           export CLOUDHUB_MAVEN_USERNAME='~~~Client~~~'
           export CLOUDHUB_MAVEN_PASSWORD="${CLOUDHUB_CLIENT_ID}~?~${CLOUDHUB_CLIENT_SECRET}"
-          mvn -V -B -ntp -DapplicationName="$CLOUDHUB_APP_NAME" mule:deploy
+          mvn -V -B -ntp \
+            -DapplicationName="$CLOUDHUB_APP_NAME" \
+            -Danypoint.platform.client_id="$ANYPOINT_PLATFORM_CLIENT_ID" \
+            -Danypoint.platform.client_secret="$ANYPOINT_PLATFORM_CLIENT_SECRET" \
+            -Dencrypt.key="$CLOUDHUB_ENCRYPT_KEY" \
+            mule:deploy
