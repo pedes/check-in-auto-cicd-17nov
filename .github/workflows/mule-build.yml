@@ -12,6 +12,10 @@ concurrency:
   group: mule-exchange-publish-${{ github.ref }}
   queue: max
 
+# Let the cache select dependencies by their source repository.
+env:
+  MAVEN_OPTS: -Daether.enhancedLocalRepository.split=true -Daether.enhancedLocalRepository.splitRemoteRepository=true
+
 defaults:
   run:
     shell: bash
@@ -39,6 +43,17 @@ jobs:
           mvn-server-credentials: |
             ${{ vars.EXCHANGE_SERVER_ID || 'anypoint-exchange-v3' }}:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
             releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
+
+      - &cache-maven
+        name: Cache public Maven dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository/cached/central
+            ~/.m2/repository/cached/mulesoft-public
+            ~/.m2/repository/cached/mulesoft-releases
+          key: maven-public-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-public-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Compile and package Mule application
         id: package
@@ -134,6 +149,8 @@ jobs:
           mvn-server-credentials: |
             ${{ vars.CLOUDHUB_SERVER_ID || 'cloudhub-deploy' }}:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
             releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
+
+      - *cache-maven
 
       - name: Deploy the Exchange asset to CloudHub 2.0
         env:
