@@ -154,6 +154,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          server-id: clodhub-deploy
+          server-username-env-var: CLOUDHUB_MAVEN_USERNAME
+          server-password-env-var: CLOUDHUB_MAVEN_PASSWORD
 
       - name: Deploy the Exchange asset to CloudHub 2.0
         env:
@@ -170,5 +173,6 @@ jobs:
           : "${ANYPOINT_PLATFORM_CLIENT_SECRET:?Set ANYPOINT_PLATFORM_CLIENT_SECRET}"
           : "${CLOUDHUB_ENCRYPT_KEY:?Set CLOUDHUB_ENCRYPT_KEY}"
 
-          # The Mule plugin reads the secure properties from this command's environment.
+          export CLOUDHUB_MAVEN_USERNAME='~~~Client~~~'
+          export CLOUDHUB_MAVEN_PASSWORD="${CLOUDHUB_CLIENT_ID}~?~${CLOUDHUB_CLIENT_SECRET}"
           ./mvnw -B -ntp -DapplicationName="$CLOUDHUB_APP_NAME" mule:deploy

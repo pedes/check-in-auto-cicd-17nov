@@ -52,9 +52,7 @@
 						<!-- mule version format muleruntime-java17 -->
 						<!-- If not provided, will choose the latest Edge version -->
 						<muleVersion>4.13.2:7e-java17</muleVersion>
-						<connectedAppClientId>${env.CLOUDHUB_CLIENT_ID}</connectedAppClientId>
-						<connectedAppClientSecret>${env.CLOUDHUB_CLIENT_SECRET}</connectedAppClientSecret>
-						<connectedAppGrantType>client_credentials</connectedAppGrantType>
+						<server>clodhub-deploy</server>
 						<applicationName>${applicationName}</applicationName>
 						<replicas>1</replicas>
 						<vCores>0.1</vCores>
