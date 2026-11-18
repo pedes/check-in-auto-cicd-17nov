@@ -56,49 +56,14 @@ jobs:
 
           export CA_MAVEN_USERNAME='~~~Client~~~'
           export CA_MAVEN_PASSWORD="$CA_CLIENT_ID~?~$CA_CLIENT_SECRET"
-          mvn -V -B -ntp -DskipTests clean package
-
-      - name: Identify the packaged Mule application JAR
-        id: mule_app
-        run: |
-          python3 <<'PY'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-          from urllib.parse import quote
-          from zipfile import BadZipFile, ZipFile
-
-          jars = list(Path("target").glob("*-mule-application.jar"))
-          if len(jars) != 1:
-              sys.exit(f"Expected one packaged Mule application JAR, found {len(jars)}.")
-
-          jar, = jars
-          try:
-              with ZipFile(jar) as archive:
-                  archive.getinfo("META-INF/mule-artifact/mule-artifact.json")
-                  model = json.loads(archive.read("META-INF/mule-artifact/classloader-model.json"))
-              metadata = model["artifactCoordinates"]
-              coordinates = [metadata[key] for key in ("groupId", "artifactId", "version")]
-              if metadata["classifier"] != "mule-application" or metadata["type"] != "jar":
-                  sys.exit("The packaged artifact must be a Mule application JAR.")
-          except (BadZipFile, KeyError, ValueError, TypeError) as error:
-              sys.exit(f"The packaged JAR is missing valid Mule application metadata: {type(error).__name__}.")
-
-          if not all(isinstance(value, str) and value.strip() and value not in (".", "..") for value in coordinates):
-              sys.exit("The packaged Mule application has invalid Exchange coordinates.")
-
-          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-              output.write("asset_path=" + "/".join(quote(value, safe="") for value in coordinates) + "\n")
-          print(f"Packaged Mule application JAR: {jar.name}")
-          PY
+          mvn -V -B -ntp -DskipTests clean package help:evaluate \
+            -Dexpression=project.id -Doutput="$RUNNER_TEMP/maven-project-id"
 
       - name: Check whether the Mule application JAR is already in Exchange
         id: exchange_version
         env:
           CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
           CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
-          MULE_APP_ASSET_PATH: ${{ steps.mule_app.outputs.asset_path }}
         run: |
           token="$(curl --fail --silent --show-error --max-time 30 \
             --data-urlencode 'grant_type=client_credentials' \
@@ -108,10 +73,14 @@ jobs:
             | jq -er '.access_token | select(type == "string" and length > 0)')"
           printf '::add-mask::%s\n' "$token"
 
+          # Maven project.id is groupId:artifactId:packaging:version.
+          asset_path="$(jq -Rer 'split(":") as [$groupId, $artifactId, $packaging, $version]
+            | select($packaging == "mule-application")
+            | [$groupId, $artifactId, $version] | map(@uri) | join("/")' "$RUNNER_TEMP/maven-project-id")"
           asset_metadata="$RUNNER_TEMP/exchange-asset.json"
           status="$(curl --silent --show-error --max-time 30 --output "$asset_metadata" \
             --write-out '%{http_code}' --header "Authorization: Bearer $token" \
-            "https://anypoint.mulesoft.com/exchange/api/v2/assets/$MULE_APP_ASSET_PATH")"
+            "https://anypoint.mulesoft.com/exchange/api/v2/assets/$asset_path")"
           case "$status" in
             200)
               if ! jq -e '.type == "app" and any(.files[]?; .classifier == "mule-application" and .packaging == "jar")' \
