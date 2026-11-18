@@ -139,7 +139,6 @@ jobs:
         env:
           RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
           RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
-          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || needs.build.outputs.artifact_id }}
           CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
           CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
           ANYPOINT_PLATFORM_CLIENT_ID: ${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}
@@ -155,7 +154,7 @@ jobs:
           export CA_MAVEN_USERNAME='~~~Client~~~'
           export CA_MAVEN_PASSWORD="$CA_CLIENT_ID~?~$CA_CLIENT_SECRET"
           mvn -V -B -ntp \
-            -DapplicationName="$CLOUDHUB_APP_NAME" \
+            -DapplicationName="check-in-app-andrescnov18" \
             -Danypoint.platform.client_id="$ANYPOINT_PLATFORM_CLIENT_ID" \
             -Danypoint.platform.client_secret="$ANYPOINT_PLATFORM_CLIENT_SECRET" \
             -Dencrypt.key="$CLOUDHUB_ENCRYPT_KEY" \
