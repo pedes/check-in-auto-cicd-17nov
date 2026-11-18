@@ -59,6 +59,11 @@
 						<applicationName>${applicationName}</applicationName>
 						<replicas>1</replicas>
 						<vCores>0.1</vCores>
+						<secureProperties>
+							<anypoint.platform.client_id>${env.ANYPOINT_PLATFORM_CLIENT_ID}</anypoint.platform.client_id>
+							<anypoint.platform.client_secret>${env.ANYPOINT_PLATFORM_CLIENT_SECRET}</anypoint.platform.client_secret>
+							<encrypt.key>${env.CLOUDHUB_ENCRYPT_KEY}</encrypt.key>
+						</secureProperties>
 						<deploymentSettings>
 							<http>
 								<inbound>
@@ -112,31 +117,5 @@
 			</snapshots>
 		</repository>
 	</repositories>
-
-	<profiles>
-		<profile>
-			<id>cloudhub-runtime-properties</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.mule.tools.maven</groupId>
-						<artifactId>mule-maven-plugin</artifactId>
-						<configuration>
-							<cloudhub2Deployment>
-								<properties>
-									<api.id>${env.CLOUDHUB_API_ID}</api.id>
-								</properties>
-								<secureProperties>
-									<anypoint.platform.client_id>${env.ANYPOINT_PLATFORM_CLIENT_ID}</anypoint.platform.client_id>
-									<anypoint.platform.client_secret>${env.ANYPOINT_PLATFORM_CLIENT_SECRET}</anypoint.platform.client_secret>
-									<encrypt.key>${env.CLOUDHUB_ENCRYPT_KEY}</encrypt.key>
-								</secureProperties>
-							</cloudhub2Deployment>
-						</configuration>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-	</profiles>
 
 </project>

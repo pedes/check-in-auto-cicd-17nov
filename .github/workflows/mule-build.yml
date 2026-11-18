@@ -28,11 +28,11 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '17'
@@ -46,7 +46,7 @@ jobs:
           EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
         run: |
           if [[ -z "$EXCHANGE_CLIENT_ID" || -z "$EXCHANGE_CLIENT_SECRET" ]]; then
-            echo "::error::Configure the shared Exchange credentials in the exchange environment."
+            echo "::error::Set EXCHANGE_READ_CLIENT_ID and EXCHANGE_READ_CLIENT_SECRET for Exchange access."
             exit 1
           fi
 
@@ -146,11 +146,11 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '17'
@@ -160,32 +160,15 @@ jobs:
           CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
           CLOUDHUB_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           CLOUDHUB_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
-          CONFIGURE_RUNTIME: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES }}
-          CLOUDHUB_API_ID: ${{ vars.CLOUDHUB_API_ID }}
-          CLOUDHUB_ENCRYPT_KEY: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.CLOUDHUB_ENCRYPT_KEY || '' }}
-          ANYPOINT_PLATFORM_CLIENT_ID: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_ID || '' }}
-          ANYPOINT_PLATFORM_CLIENT_SECRET: ${{ vars.CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES == 'true' && secrets.ANYPOINT_PLATFORM_CLIENT_SECRET || '' }}
+          ANYPOINT_PLATFORM_CLIENT_ID: ${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}
+          ANYPOINT_PLATFORM_CLIENT_SECRET: ${{ secrets.ANYPOINT_PLATFORM_CLIENT_SECRET }}
+          CLOUDHUB_ENCRYPT_KEY: ${{ secrets.CLOUDHUB_ENCRYPT_KEY }}
         run: |
-          if [[ -z "$CLOUDHUB_CLIENT_ID" || -z "$CLOUDHUB_CLIENT_SECRET" ]]; then
-            echo "::error::The shared Anypoint Connected App secrets are unavailable."
-            exit 1
-          fi
+          : "${CLOUDHUB_CLIENT_ID:?Set EXCHANGE_READ_CLIENT_ID}"
+          : "${CLOUDHUB_CLIENT_SECRET:?Set EXCHANGE_READ_CLIENT_SECRET}"
+          : "${ANYPOINT_PLATFORM_CLIENT_ID:?Set ANYPOINT_PLATFORM_CLIENT_ID}"
+          : "${ANYPOINT_PLATFORM_CLIENT_SECRET:?Set ANYPOINT_PLATFORM_CLIENT_SECRET}"
+          : "${CLOUDHUB_ENCRYPT_KEY:?Set CLOUDHUB_ENCRYPT_KEY}"
 
-          runtime_profile=()
-          case "$CONFIGURE_RUNTIME" in
-            ''|false) ;;
-            true)
-              if [[ ! "$CLOUDHUB_API_ID" =~ ^[1-9][0-9]*$ || -z "$CLOUDHUB_ENCRYPT_KEY" || -z "$ANYPOINT_PLATFORM_CLIENT_ID" || -z "$ANYPOINT_PLATFORM_CLIENT_SECRET" ]]; then
-                echo "::error::Setting runtime properties requires CLOUDHUB_API_ID, CLOUDHUB_ENCRYPT_KEY, and both Anypoint Platform credentials."
-                exit 1
-              fi
-              runtime_profile=(-Pcloudhub-runtime-properties)
-              ;;
-            *)
-              echo "::error::CLOUDHUB_CONFIGURE_RUNTIME_PROPERTIES must be true or false."
-              exit 1
-              ;;
-          esac
-
-          # CloudHub retrieves the published version from Exchange.
-          ./mvnw -B -ntp "${runtime_profile[@]}" mule:deploy
+          # The Mule plugin reads the secure properties from this command's environment.
+          ./mvnw -B -ntp mule:deploy
