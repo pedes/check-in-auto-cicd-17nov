@@ -37,25 +37,25 @@ jobs:
           distribution: temurin
           java-version: '17'
           mvn-server-credentials: |
-            anypoint-exchange-v3-student-deployment:EXCHANGE_MAVEN_USERNAME:EXCHANGE_MAVEN_PASSWORD
+            anypoint-exchange-v3-student-deployment:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
             releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
 
       - name: Compile and package Mule application
         env:
           RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
           RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
-          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
-          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
+          CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
         run: |
           : "${RELEASES_EE_USERNAME:?Set RELEASES_EE_USERNAME}"
           : "${RELEASES_EE_PASSWORD:?Set RELEASES_EE_PASSWORD}"
-          if [[ -z "$EXCHANGE_CLIENT_ID" || -z "$EXCHANGE_CLIENT_SECRET" ]]; then
-            echo "::error::Set EXCHANGE_READ_CLIENT_ID and EXCHANGE_READ_CLIENT_SECRET for Exchange access."
+          if [[ -z "$CA_CLIENT_ID" || -z "$CA_CLIENT_SECRET" ]]; then
+            echo "::error::Set CA_CLIENT_ID and CA_CLIENT_SECRET for Exchange access."
             exit 1
           fi
 
-          export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
-          export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
+          export CA_MAVEN_USERNAME='~~~Client~~~'
+          export CA_MAVEN_PASSWORD="$CA_CLIENT_ID~?~$CA_CLIENT_SECRET"
           mvn -V -B -ntp -DskipTests clean package
 
       - name: Identify the packaged Mule application JAR
@@ -96,14 +96,14 @@ jobs:
       - name: Check whether the Mule application JAR is already in Exchange
         id: exchange_version
         env:
-          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
-          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
+          CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
           MULE_APP_ASSET_PATH: ${{ steps.mule_app.outputs.asset_path }}
         run: |
           token="$(curl --fail --silent --show-error --max-time 30 \
             --data-urlencode 'grant_type=client_credentials' \
-            --data-urlencode "client_id=$EXCHANGE_CLIENT_ID" \
-            --data-urlencode "client_secret=$EXCHANGE_CLIENT_SECRET" \
+            --data-urlencode "client_id=$CA_CLIENT_ID" \
+            --data-urlencode "client_secret=$CA_CLIENT_SECRET" \
             'https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token' \
             | jq -er '.access_token | select(type == "string" and length > 0)')"
           printf '::add-mask::%s\n' "$token"
@@ -136,11 +136,11 @@ jobs:
         env:
           RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
           RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
-          EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
-          EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
+          CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
         run: |
-          export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
-          export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
+          export CA_MAVEN_USERNAME='~~~Client~~~'
+          export CA_MAVEN_PASSWORD="$CA_CLIENT_ID~?~$CA_CLIENT_SECRET"
           mvn -B -ntp -DskipTests deploy
 
   deploy_cloudhub:
@@ -161,7 +161,7 @@ jobs:
           distribution: temurin
           java-version: '17'
           mvn-server-credentials: |
-            clodhub-deploy:CLOUDHUB_MAVEN_USERNAME:CLOUDHUB_MAVEN_PASSWORD
+            clodhub-deploy:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
             releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
 
       - name: Deploy the Exchange asset to CloudHub 2.0
@@ -169,20 +169,20 @@ jobs:
           RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
           RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
           CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
-          CLOUDHUB_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
-          CLOUDHUB_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
+          CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
+          CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
           ANYPOINT_PLATFORM_CLIENT_ID: ${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}
           ANYPOINT_PLATFORM_CLIENT_SECRET: ${{ secrets.ANYPOINT_PLATFORM_CLIENT_SECRET }}
           CLOUDHUB_ENCRYPT_KEY: ${{ secrets.CLOUDHUB_ENCRYPT_KEY }}
         run: |
-          : "${CLOUDHUB_CLIENT_ID:?Set EXCHANGE_READ_CLIENT_ID}"
-          : "${CLOUDHUB_CLIENT_SECRET:?Set EXCHANGE_READ_CLIENT_SECRET}"
+          : "${CA_CLIENT_ID:?Set CA_CLIENT_ID}"
+          : "${CA_CLIENT_SECRET:?Set CA_CLIENT_SECRET}"
           : "${ANYPOINT_PLATFORM_CLIENT_ID:?Set ANYPOINT_PLATFORM_CLIENT_ID}"
           : "${ANYPOINT_PLATFORM_CLIENT_SECRET:?Set ANYPOINT_PLATFORM_CLIENT_SECRET}"
           : "${CLOUDHUB_ENCRYPT_KEY:?Set CLOUDHUB_ENCRYPT_KEY}"
 
-          export CLOUDHUB_MAVEN_USERNAME='~~~Client~~~'
-          export CLOUDHUB_MAVEN_PASSWORD="${CLOUDHUB_CLIENT_ID}~?~${CLOUDHUB_CLIENT_SECRET}"
+          export CA_MAVEN_USERNAME='~~~Client~~~'
+          export CA_MAVEN_PASSWORD="$CA_CLIENT_ID~?~$CA_CLIENT_SECRET"
           mvn -V -B -ntp \
             -DapplicationName="$CLOUDHUB_APP_NAME" \
             -Danypoint.platform.client_id="$ANYPOINT_PLATFORM_CLIENT_ID" \
