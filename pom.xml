@@ -55,7 +55,7 @@
 						<server>clodhub-deploy</server>
 						<applicationName>${applicationName}</applicationName>
 						<replicas>1</replicas>
-						<vCores>0.1</vCores>
+						<vCores>0.2</vCores>
 						<secureProperties>
 							<anypoint.platform.client_id>${anypoint.platform.client_id}</anypoint.platform.client_id>
 							<anypoint.platform.client_secret>${anypoint.platform.client_secret}</anypoint.platform.client_secret>
