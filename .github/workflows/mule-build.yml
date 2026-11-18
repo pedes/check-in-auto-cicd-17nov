@@ -36,15 +36,30 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          server-id: anypoint-exchange-v3-student-deployment
-          server-username-env-var: EXCHANGE_MAVEN_USERNAME
-          server-password-env-var: EXCHANGE_MAVEN_PASSWORD
+          mvn-server-credentials: |
+            anypoint-exchange-v3-student-deployment:EXCHANGE_MAVEN_USERNAME:EXCHANGE_MAVEN_PASSWORD
+            releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
+
+      - &install-maven
+        name: Install Apache Maven 3.9.15
+        run: |
+          cd "$RUNNER_TEMP"
+          archive=apache-maven-3.9.15-bin.zip
+          curl --fail --silent --show-error --location --retry 3 --max-time 120 --output "$archive" \
+            "https://archive.apache.org/dist/maven/maven-3/3.9.15/binaries/$archive"
+          echo "b0d9292f06c5faded31ddcb6cb69099f316d6fea40a7778624b259bad9fed18a  $archive" | sha256sum --check
+          unzip -q "$archive"
+          echo "$RUNNER_TEMP/apache-maven-3.9.15/bin" >> "$GITHUB_PATH"
 
       - name: Compile and package Mule application
         env:
+          RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
+          RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
           EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
         run: |
+          : "${RELEASES_EE_USERNAME:?Set RELEASES_EE_USERNAME}"
+          : "${RELEASES_EE_PASSWORD:?Set RELEASES_EE_PASSWORD}"
           if [[ -z "$EXCHANGE_CLIENT_ID" || -z "$EXCHANGE_CLIENT_SECRET" ]]; then
             echo "::error::Set EXCHANGE_READ_CLIENT_ID and EXCHANGE_READ_CLIENT_SECRET for Exchange access."
             exit 1
@@ -52,7 +67,7 @@ jobs:
 
           export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
           export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
-          ./mvnw -B -ntp -DskipTests clean package
+          mvn -B -ntp -DskipTests clean package
 
       - name: Identify the packaged Mule application JAR
         id: mule_app
@@ -130,12 +145,14 @@ jobs:
       - name: Publish Mule application to Anypoint Exchange
         if: steps.exchange_version.outputs.exists == 'false'
         env:
+          RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
+          RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
           EXCHANGE_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           EXCHANGE_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
         run: |
           export EXCHANGE_MAVEN_USERNAME='~~~Client~~~'
           export EXCHANGE_MAVEN_PASSWORD="$EXCHANGE_CLIENT_ID~?~$EXCHANGE_CLIENT_SECRET"
-          ./mvnw -B -ntp -DskipTests deploy
+          mvn -B -ntp -DskipTests deploy
 
   deploy_cloudhub:
     name: Deploy the published Mule app to CloudHub Sandbox
@@ -154,12 +171,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          server-id: clodhub-deploy
-          server-username-env-var: CLOUDHUB_MAVEN_USERNAME
-          server-password-env-var: CLOUDHUB_MAVEN_PASSWORD
+          mvn-server-credentials: |
+            clodhub-deploy:CLOUDHUB_MAVEN_USERNAME:CLOUDHUB_MAVEN_PASSWORD
+            releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
+
+      - *install-maven
 
       - name: Deploy the Exchange asset to CloudHub 2.0
         env:
+          RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
+          RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
           CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
           CLOUDHUB_CLIENT_ID: ${{ secrets.EXCHANGE_READ_CLIENT_ID }}
           CLOUDHUB_CLIENT_SECRET: ${{ secrets.EXCHANGE_READ_CLIENT_SECRET }}
@@ -175,4 +196,4 @@ jobs:
 
           export CLOUDHUB_MAVEN_USERNAME='~~~Client~~~'
           export CLOUDHUB_MAVEN_PASSWORD="${CLOUDHUB_CLIENT_ID}~?~${CLOUDHUB_CLIENT_SECRET}"
-          ./mvnw -B -ntp -DapplicationName="$CLOUDHUB_APP_NAME" mule:deploy
+          mvn -B -ntp -DapplicationName="$CLOUDHUB_APP_NAME" mule:deploy
