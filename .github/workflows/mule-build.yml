@@ -171,4 +171,4 @@ jobs:
           : "${CLOUDHUB_ENCRYPT_KEY:?Set CLOUDHUB_ENCRYPT_KEY}"
 
           # The Mule plugin reads the secure properties from this command's environment.
-          ./mvnw -B -ntp mule:deploy
+          ./mvnw -B -ntp -DapplicationName="$CLOUDHUB_APP_NAME" mule:deploy
