@@ -2,14 +2,14 @@ name: Mule Build, Exchange Publish and Sandbox Deploy
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: mule-exchange-publish
+  group: mule-exchange-publish-${{ github.ref }}
   queue: max
 
 defaults:
@@ -19,10 +19,10 @@ defaults:
 jobs:
   build:
     name: Build and publish Mule application
-    if: >-
-      github.repository == 'pedes/check-in-auto-cicd-17nov'
-      && github.ref == 'refs/heads/main'
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Limit both jobs to the repository's default branch, including manual runs.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && !github.event.deleted
+    outputs:
+      artifact_id: ${{ steps.package.outputs.artifact_id }}
     environment: exchange
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -37,10 +37,11 @@ jobs:
           distribution: temurin
           java-version: '17'
           mvn-server-credentials: |
-            anypoint-exchange-v3-student-deployment:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
+            ${{ vars.EXCHANGE_SERVER_ID || 'anypoint-exchange-v3' }}:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
             releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
 
       - name: Compile and package Mule application
+        id: package
         env:
           RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
           RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
@@ -58,6 +59,7 @@ jobs:
           export CA_MAVEN_PASSWORD="$CA_CLIENT_ID~?~$CA_CLIENT_SECRET"
           mvn -V -B -ntp -DskipTests clean package help:evaluate \
             -Dexpression=project.id -Doutput="$RUNNER_TEMP/maven-project-id"
+          echo "artifact_id=$(cut -d: -f2 "$RUNNER_TEMP/maven-project-id")" >> "$GITHUB_OUTPUT"
 
       - name: Check whether the Mule application JAR is already in Exchange
         id: exchange_version
@@ -130,14 +132,14 @@ jobs:
           distribution: temurin
           java-version: '17'
           mvn-server-credentials: |
-            clodhub-deploy:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
+            ${{ vars.CLOUDHUB_SERVER_ID || 'cloudhub-deploy' }}:CA_MAVEN_USERNAME:CA_MAVEN_PASSWORD
             releases-ee:RELEASES_EE_USERNAME:RELEASES_EE_PASSWORD
 
       - name: Deploy the Exchange asset to CloudHub 2.0
         env:
           RELEASES_EE_USERNAME: ${{ secrets.RELEASES_EE_USERNAME }}
           RELEASES_EE_PASSWORD: ${{ secrets.RELEASES_EE_PASSWORD }}
-          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || 'check-in-proc-api-app' }}
+          CLOUDHUB_APP_NAME: ${{ vars.CLOUDHUB_APP_NAME || needs.build.outputs.artifact_id }}
           CA_CLIENT_ID: ${{ secrets.CA_CLIENT_ID }}
           CA_CLIENT_SECRET: ${{ secrets.CA_CLIENT_SECRET }}
           ANYPOINT_PLATFORM_CLIENT_ID: ${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}
